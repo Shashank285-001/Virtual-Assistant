@@ -21,6 +21,37 @@ app.use("/api/auth",authRouter)
 app.use("/api/user",userRouter)
 
 
+app.get("/", async (req, res) => {
+    try {
+        const prompt = req.query.prompt;
+
+        if (!prompt) {
+            return res.status(400).json({
+                success: false,
+                message: "Prompt is required"
+            });
+        }
+
+        const response = await geminiResponse(
+            prompt,
+            "Jarvis",
+            "Shashank"
+        );
+
+        res.json({
+            success: true,
+            response
+        });
+
+    } catch (error) {
+        console.log(error);
+
+        res.status(500).json({
+            success: false,
+            message: "Something went wrong"
+        });
+    }
+});
 app.listen(port,()=>{
     connectDb()
     console.log("server started")
