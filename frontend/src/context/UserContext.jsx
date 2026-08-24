@@ -9,7 +9,7 @@ function UserContext({children}) {
      const [selectedImage,setSelectedImage]=useState(null)
     const handleCurrentUser=async ()=>{
         try {
-            const result=await axios.get(`${serverUrl}/api/user/current`,{withCredentials:true})
+            const result=await axios.get(`${https://virtual-assistant-backend-4r2c.onrender.com}/api/user/current`,{withCredentials:true})
             setUserData(result.data)
             console.log(result.data)
         } catch (error) {
