@@ -30,6 +30,8 @@ function Home() {
   const isSpeakingRef = useRef(false);
   const recognitionRef = useRef(null);
   const isRecognizingRef = useRef(false);
+  const shouldListenRef = useRef(false);
+const restartTimeoutRef = useRef(null);
 
   // NEW: prevents recognition from restarting
   // while Gemini is processing the command
