@@ -4,13 +4,16 @@ import React, {
   useRef,
   useState,
 } from "react";
+
 import { userDataContext } from "../context/UserContext";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+
 import aiImg from "../assets/ai.gif";
+import userImg from "../assets/user.gif";
+
 import { CgMenuRight } from "react-icons/cg";
 import { RxCross1 } from "react-icons/rx";
-import userImg from "../assets/user.gif";
 
 function Home() {
   const {
@@ -27,17 +30,20 @@ function Home() {
   const [aiText, setAiText] = useState("");
   const [ham, setHam] = useState(false);
 
+  // ==========================================
+  // REFS
+  // ==========================================
+
   const isSpeakingRef = useRef(false);
   const recognitionRef = useRef(null);
   const isRecognizingRef = useRef(false);
-  const shouldListenRef = useRef(false);
-const restartTimeoutRef = useRef(null);
-
-  // NEW: prevents recognition from restarting
-  // while Gemini is processing the command
   const isProcessingRef = useRef(false);
 
-  const synth = window.speechSynthesis;
+  // Controls whether Jarvis should continue listening
+  const shouldListenRef = useRef(false);
+
+  // Prevent multiple restart timers
+  const restartTimeoutRef = useRef(null);
 
   // ==========================================
   // LOGOUT
@@ -60,28 +66,27 @@ const restartTimeoutRef = useRef(null);
   };
 
   // ==========================================
-  // START SPEECH RECOGNITION
+  // START RECOGNITION
   // ==========================================
 
   const startRecognition = () => {
     if (
-      !isSpeakingRef.current &&
-      !isRecognizingRef.current &&
-      !isProcessingRef.current
+      !recognitionRef.current ||
+      !shouldListenRef.current ||
+      isSpeakingRef.current ||
+      isRecognizingRef.current ||
+      isProcessingRef.current
     ) {
-      try {
-        recognitionRef.current?.start();
+      return;
+    }
 
-        console.log(
-          "Recognition requested to start"
-        );
-      } catch (error) {
-        if (error.name !== "InvalidStateError") {
-          console.error(
-            "Start error:",
-            error
-          );
-        }
+    try {
+      recognitionRef.current.start();
+
+      console.log("🎤 Recognition requested to start");
+    } catch (error) {
+      if (error.name !== "InvalidStateError") {
+        console.error("Recognition start error:", error);
       }
     }
   };
@@ -93,77 +98,68 @@ const restartTimeoutRef = useRef(null);
   const speak = (text) => {
     if (!text) {
       isProcessingRef.current = false;
+      shouldListenRef.current = true;
       return;
     }
 
-    const utterance =
-      new SpeechSynthesisUtterance(text);
+    // Stop recognition while AI speaks
+    shouldListenRef.current = false;
 
-    utterance.lang = "hi-IN";
-
-    const voices =
-      window.speechSynthesis.getVoices();
-
-    const hindiVoice = voices.find(
-      (v) =>
-        v.lang === "hi-IN" ||
-        v.lang.startsWith("hi")
-    );
-
-    if (hindiVoice) {
-      utterance.voice = hindiVoice;
-    }
-
-    // Stop current recognition before speaking
     try {
       recognitionRef.current?.stop();
     } catch (error) {
-      // Ignore
+      console.log("Recognition stop error:", error);
     }
 
     isRecognizingRef.current = false;
     setListening(false);
 
-    isSpeakingRef.current = true;
+    // Cancel any previous speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    utterance.lang = "en-US";
 
     utterance.onstart = () => {
-      console.log("AI started speaking");
+      console.log("🔊 AI started speaking");
+
+      isSpeakingRef.current = true;
     };
 
     utterance.onend = () => {
-      console.log("AI finished speaking");
+      console.log("🔊 AI finished speaking");
 
       setAiText("");
 
       isSpeakingRef.current = false;
       isProcessingRef.current = false;
 
-      // Start listening again after AI finishes
+      // Allow listening again
+      shouldListenRef.current = true;
+
       setTimeout(() => {
         startRecognition();
-      }, 800);
+      }, 700);
     };
 
     utterance.onerror = (error) => {
-      console.error(
-        "Speech synthesis error:",
-        error
-      );
+      console.error("Speech synthesis error:", error);
 
       setAiText("");
 
       isSpeakingRef.current = false;
       isProcessingRef.current = false;
 
+      // Allow listening again
+      shouldListenRef.current = true;
+
       setTimeout(() => {
         startRecognition();
-      }, 800);
+      }, 700);
     };
 
-    // Stop previous speech
-    synth.cancel();
-
-    synth.speak(utterance);
+    window.speechSynthesis.speak(utterance);
   };
 
   // ==========================================
@@ -171,27 +167,20 @@ const restartTimeoutRef = useRef(null);
   // ==========================================
 
   const cleanYouTubeQuery = (text) => {
-    if (!text) {
-      return "";
-    }
+    if (!text) return "";
 
     let query = text.toLowerCase();
 
-    // Remove assistant name
     if (userData?.assistantName) {
       const assistantName =
         userData.assistantName.toLowerCase();
 
       query = query.replace(
-        new RegExp(
-          `\\b${assistantName}\\b`,
-          "gi"
-        ),
+        new RegExp(`\\b${assistantName}\\b`, "gi"),
         ""
       );
     }
 
-    // Remove common command words
     query = query
       .replace(/\bhello\b/gi, "")
       .replace(/\bhey\b/gi, "")
@@ -214,22 +203,15 @@ const restartTimeoutRef = useRef(null);
   // ==========================================
 
   const handleCommand = (data) => {
-    // IMPORTANT:
-    // Prevent destructuring undefined
     if (!data) {
-      console.error(
-        "No data received from backend"
-      );
+      const message =
+        "Sorry, I could not process your request.";
+
+      console.error("No data received from backend");
 
       setUserText("");
-
-      setAiText(
-        "Sorry, I could not process your request."
-      );
-
-      speak(
-        "Sorry, I could not process your request."
-      );
+      setAiText(message);
+      speak(message);
 
       return;
     }
@@ -240,28 +222,16 @@ const restartTimeoutRef = useRef(null);
       response,
     } = data;
 
-    console.log(
-      "Command received:",
-      data
-    );
-
-    // ========================================
-    // CHECK RESPONSE
-    // ========================================
+    console.log("Command received:", data);
 
     if (!response) {
-      console.error(
-        "Invalid backend response:",
-        data
-      );
+      const message =
+        "Sorry, I could not process your request.";
 
-      setAiText(
-        "Sorry, I could not process your request."
-      );
+      console.error("Invalid backend response:", data);
 
-      speak(
-        "Sorry, I could not process your request."
-      );
+      setAiText(message);
+      speak(message);
 
       return;
     }
@@ -271,20 +241,15 @@ const restartTimeoutRef = useRef(null);
     // ========================================
 
     if (type === "google-search") {
-      const query = encodeURIComponent(
-        userInput || ""
-      );
+      const query = encodeURIComponent(userInput || "");
 
       setAiText(response);
-
       speak(response);
 
-      // Use location instead of window.open
-      // because this command comes from speech
       setTimeout(() => {
         window.location.href =
           `https://www.google.com/search?q=${query}`;
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -295,13 +260,12 @@ const restartTimeoutRef = useRef(null);
 
     if (type === "calculator-open") {
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
         window.location.href =
           "https://www.google.com/search?q=calculator";
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -312,13 +276,12 @@ const restartTimeoutRef = useRef(null);
 
     if (type === "instagram-open") {
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
         window.location.href =
           "https://www.instagram.com/";
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -329,13 +292,12 @@ const restartTimeoutRef = useRef(null);
 
     if (type === "facebook-open") {
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
         window.location.href =
           "https://www.facebook.com/";
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -346,13 +308,12 @@ const restartTimeoutRef = useRef(null);
 
     if (type === "weather-show") {
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
         window.location.href =
           "https://www.google.com/search?q=weather";
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -363,13 +324,12 @@ const restartTimeoutRef = useRef(null);
 
     if (type === "youtube-open") {
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
         window.location.href =
           "https://www.youtube.com/";
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -391,12 +351,9 @@ const restartTimeoutRef = useRef(null);
       );
 
       setAiText(response);
-
       speak(response);
 
       setTimeout(() => {
-        // If no actual search text,
-        // simply open YouTube
         if (!query) {
           window.location.href =
             "https://www.youtube.com/";
@@ -409,7 +366,7 @@ const restartTimeoutRef = useRef(null);
 
         window.location.href =
           `https://www.youtube.com/results?search_query=${encodedQuery}`;
-      }, 500);
+      }, 1200);
 
       return;
     }
@@ -419,305 +376,327 @@ const restartTimeoutRef = useRef(null);
     // ========================================
 
     setAiText(response);
-
     speak(response);
   };
 
   // ==========================================
-  // SPEECH RECOGNITION USEEFFECT
+  // SPEECH RECOGNITION
   // ==========================================
 
   useEffect(() => {
-  if (!userData) return;
+    if (!userData) return;
 
-  const SpeechRecognition =
-    window.SpeechRecognition ||
-    window.webkitSpeechRecognition;
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
 
-  if (!SpeechRecognition) {
-    console.error("Speech Recognition is not supported");
-
-    setAiText(
-      "Speech recognition is not supported in this browser."
-    );
-
-    return;
-  }
-
-  const recognition = new SpeechRecognition();
-
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = "en-US";
-
-  recognitionRef.current = recognition;
-
-  let isMounted = true;
-
-  // ==========================================
-  // SAFE START FUNCTION
-  // ==========================================
-
-  const startListening = () => {
-    if (!isMounted) return;
-
-    if (
-      !shouldListenRef.current ||
-      isSpeakingRef.current ||
-      isProcessingRef.current ||
-      isRecognizingRef.current
-    ) {
-      return;
-    }
-
-    try {
-      recognition.start();
-
-      console.log("🎤 Recognition requested to start");
-    } catch (error) {
-      if (error.name !== "InvalidStateError") {
-        console.error("Recognition start error:", error);
-      }
-    }
-  };
-
-  // ==========================================
-  // ON START
-  // ==========================================
-
-  recognition.onstart = () => {
-    console.log("🎤 Recognition started");
-
-    isRecognizingRef.current = true;
-    setListening(true);
-  };
-
-  // ==========================================
-  // ON RESULT
-  // ==========================================
-
-  recognition.onresult = async (e) => {
-    if (
-      isSpeakingRef.current ||
-      isProcessingRef.current
-    ) {
-      return;
-    }
-
-    const transcript =
-      e.results[e.results.length - 1][0]
-        .transcript.trim();
-
-    if (!transcript) return;
-
-    console.log("🗣️ User said:", transcript);
-
-    const assistantName =
-      userData?.assistantName?.toLowerCase();
-
-    if (!assistantName) {
-      console.error("Assistant name not found");
-      return;
-    }
-
-    // ========================================
-    // WAKE WORD DETECTED
-    // ========================================
-
-    if (
-      transcript
-        .toLowerCase()
-        .includes(assistantName)
-    ) {
-      console.log("🔥 Wake word detected!");
-
-      // Stop listening while processing
-      shouldListenRef.current = false;
-
-      isProcessingRef.current = true;
-
-      setUserText(transcript);
-      setAiText("");
-
-      try {
-        recognition.stop();
-      } catch (error) {
-        console.log(error);
-      }
-
-      try {
-        console.log("Sending request to Gemini...");
-
-        const data =
-          await getGeminiResponse(transcript);
-
-        console.log("Gemini response:", data);
-
-        setUserText("");
-
-        if (!data) {
-          throw new Error(
-            "No response received from Gemini"
-          );
-        }
-
-        handleCommand(data);
-
-      } catch (error) {
-        console.error(
-          "Gemini request error:",
-          error
-        );
-
-        setUserText("");
-
-        const errorMessage =
-          "Sorry, something went wrong.";
-
-        setAiText(errorMessage);
-
-        speak(errorMessage);
-      }
-    }
-  };
-
-  // ==========================================
-  // ON ERROR
-  // ==========================================
-
-  recognition.onerror = (event) => {
-    console.warn(
-      "🎤 Recognition error:",
-      event.error
-    );
-
-    isRecognizingRef.current = false;
-    setListening(false);
-
-    // STOP COMPLETELY for permission problems
-    if (
-      event.error === "not-allowed" ||
-      event.error === "service-not-allowed"
-    ) {
-      shouldListenRef.current = false;
+    if (!SpeechRecognition) {
+      console.error(
+        "Speech Recognition is not supported"
+      );
 
       setAiText(
-        "Microphone permission is required."
+        "Speech recognition is not supported in this browser."
       );
 
       return;
     }
 
-    // Don't restart here!
-    // onend will handle restarting.
-  };
+    const recognition = new SpeechRecognition();
 
-  // ==========================================
-  // ON END
-  // ==========================================
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
 
-  recognition.onend = () => {
-    console.log("🎤 Recognition ended");
+    recognitionRef.current = recognition;
 
-    isRecognizingRef.current = false;
-    setListening(false);
+    let isMounted = true;
 
-    // Only restart if Jarvis should listen
-    if (
-      isMounted &&
-      shouldListenRef.current &&
-      !isSpeakingRef.current &&
-      !isProcessingRef.current
-    ) {
-      clearTimeout(restartTimeoutRef.current);
+    // ========================================
+    // ON START
+    // ========================================
 
-      restartTimeoutRef.current = setTimeout(() => {
-        console.log("🔄 Restarting recognition...");
+    recognition.onstart = () => {
+      console.log("🎤 Recognition started");
 
-        startListening();
-      }, 500);
-    }
-  };
+      isRecognizingRef.current = true;
+      setListening(true);
+    };
 
-  // ==========================================
-  // GREETING
-  // ==========================================
+    // ========================================
+    // ON RESULT
+    // ========================================
 
-  const greeting =
-    new SpeechSynthesisUtterance(
-      `Hello ${userData?.name || ""}, what can I help you with?`
-    );
+    recognition.onresult = async (event) => {
+      if (
+        isSpeakingRef.current ||
+        isProcessingRef.current
+      ) {
+        return;
+      }
 
-  greeting.lang = "en-US";
+      const transcript =
+        event.results[
+          event.results.length - 1
+        ][0].transcript.trim();
 
-  greeting.onstart = () => {
-    console.log("Greeting started");
+      if (!transcript) return;
 
-    isSpeakingRef.current = true;
+      console.log("🗣️ User said:", transcript);
 
-    // Don't listen while speaking
-    shouldListenRef.current = false;
-  };
+      const assistantName =
+        userData?.assistantName?.toLowerCase();
 
-  greeting.onend = () => {
-    console.log("Greeting finished");
+      if (!assistantName) {
+        console.error(
+          "Assistant name not found"
+        );
 
-    isSpeakingRef.current = false;
+        return;
+      }
 
-    // Now Jarvis should listen
-    shouldListenRef.current = true;
+      // ======================================
+      // CHECK WAKE WORD
+      // ======================================
 
-    setTimeout(() => {
-      startListening();
-    }, 500);
-  };
+      if (
+        transcript
+          .toLowerCase()
+          .includes(assistantName)
+      ) {
+        console.log("🔥 Wake word detected!");
 
-  greeting.onerror = () => {
-    console.log("Greeting error");
+        // Stop listening while processing
+        shouldListenRef.current = false;
 
-    isSpeakingRef.current = false;
+        isProcessingRef.current = true;
 
-    shouldListenRef.current = true;
+        setUserText(transcript);
+        setAiText("");
 
-    setTimeout(() => {
-      startListening();
-    }, 500);
-  };
+        try {
+          recognition.stop();
+        } catch (error) {
+          console.log(
+            "Recognition stop error:",
+            error
+          );
+        }
 
-  // ==========================================
-  // START GREETING
-  // ==========================================
+        try {
+          console.log(
+            "Sending request to Gemini..."
+          );
 
-  window.speechSynthesis.cancel();
+          const data =
+            await getGeminiResponse(transcript);
 
-  window.speechSynthesis.speak(greeting);
+          console.log(
+            "Gemini response:",
+            data
+          );
 
-  // ==========================================
-  // CLEANUP
-  // ==========================================
+          setUserText("");
 
-  return () => {
-    console.log("Cleaning speech recognition");
+          if (!data) {
+            throw new Error(
+              "No response received from Gemini"
+            );
+          }
 
-    isMounted = false;
+          handleCommand(data);
 
-    shouldListenRef.current = false;
+        } catch (error) {
+          console.error(
+            "Gemini request error:",
+            error
+          );
 
-    clearTimeout(restartTimeoutRef.current);
+          setUserText("");
 
-    try {
-      recognition.stop();
-    } catch (error) {}
+          const message =
+            "Sorry, something went wrong.";
+
+          setAiText(message);
+
+          speak(message);
+        }
+      }
+    };
+
+    // ========================================
+    // ON ERROR
+    // ========================================
+
+    recognition.onerror = (event) => {
+      console.warn(
+        "🎤 Recognition error:",
+        event.error
+      );
+
+      isRecognizingRef.current = false;
+      setListening(false);
+
+      // Permission denied
+      if (
+        event.error === "not-allowed" ||
+        event.error === "service-not-allowed"
+      ) {
+        shouldListenRef.current = false;
+
+        setAiText(
+          "Microphone permission is required."
+        );
+
+        return;
+      }
+
+      // Don't restart here.
+      // onend handles restart.
+    };
+
+    // ========================================
+    // ON END
+    // ========================================
+
+    recognition.onend = () => {
+      console.log("🎤 Recognition ended");
+
+      isRecognizingRef.current = false;
+      setListening(false);
+
+      if (
+        isMounted &&
+        shouldListenRef.current &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current
+      ) {
+        clearTimeout(restartTimeoutRef.current);
+
+        restartTimeoutRef.current = setTimeout(() => {
+          if (
+            isMounted &&
+            shouldListenRef.current &&
+            !isSpeakingRef.current &&
+            !isProcessingRef.current &&
+            !isRecognizingRef.current
+          ) {
+            try {
+              recognition.start();
+
+              console.log(
+                "🔄 Recognition restarted"
+              );
+            } catch (error) {
+              if (
+                error.name !==
+                "InvalidStateError"
+              ) {
+                console.error(
+                  "Restart error:",
+                  error
+                );
+              }
+            }
+          }
+        }, 700);
+      }
+    };
+
+    // ========================================
+    // GREETING
+    // ========================================
+
+    const greeting =
+      new SpeechSynthesisUtterance(
+        `Hello ${
+          userData?.name || ""
+        }, what can I help you with?`
+      );
+
+    greeting.lang = "en-US";
+
+    greeting.onstart = () => {
+      console.log("👋 Greeting started");
+
+      isSpeakingRef.current = true;
+
+      shouldListenRef.current = false;
+    };
+
+    greeting.onend = () => {
+      console.log("👋 Greeting finished");
+
+      isSpeakingRef.current = false;
+
+      shouldListenRef.current = true;
+
+      setTimeout(() => {
+        if (
+          isMounted &&
+          shouldListenRef.current
+        ) {
+          startRecognition();
+        }
+      }, 700);
+    };
+
+    greeting.onerror = () => {
+      console.log("Greeting speech error");
+
+      isSpeakingRef.current = false;
+
+      shouldListenRef.current = true;
+
+      setTimeout(() => {
+        if (
+          isMounted &&
+          shouldListenRef.current
+        ) {
+          startRecognition();
+        }
+      }, 700);
+    };
+
+    // ========================================
+    // START GREETING
+    // ========================================
 
     window.speechSynthesis.cancel();
 
-    isRecognizingRef.current = false;
-    isProcessingRef.current = false;
+    window.speechSynthesis.speak(greeting);
 
-    recognitionRef.current = null;
-  };
+    // ========================================
+    // CLEANUP
+    // ========================================
 
-}, [userData]);
+    return () => {
+      console.log(
+        "Cleaning speech recognition"
+      );
+
+      isMounted = false;
+
+      shouldListenRef.current = false;
+
+      clearTimeout(
+        restartTimeoutRef.current
+      );
+
+      try {
+        recognition.stop();
+      } catch (error) {
+        // Ignore
+      }
+
+      window.speechSynthesis.cancel();
+
+      isRecognizingRef.current = false;
+      isProcessingRef.current = false;
+
+      recognitionRef.current = null;
+    };
+  }, [userData]);
 
   // ==========================================
   // UI
@@ -727,6 +706,7 @@ const restartTimeoutRef = useRef(null);
     <div className="w-full h-[100vh] bg-gradient-to-t from-[black] to-[#02023d] flex justify-center items-center flex-col gap-[15px] overflow-hidden">
 
       {/* Mobile Menu */}
+
       <CgMenuRight
         className="lg:hidden text-white absolute top-[20px] right-[20px] w-[25px] h-[25px]"
         onClick={() => setHam(true)}
@@ -781,6 +761,7 @@ const restartTimeoutRef = useRef(null);
       </div>
 
       {/* Desktop Logout */}
+
       <button
         className="min-w-[150px] h-[60px] mt-[30px] text-black font-semibold absolute hidden lg:block top-[20px] right-[20px] bg-white rounded-full cursor-pointer text-[19px]"
         onClick={handleLogOut}
@@ -789,6 +770,7 @@ const restartTimeoutRef = useRef(null);
       </button>
 
       {/* Desktop Customize */}
+
       <button
         className="min-w-[150px] h-[60px] mt-[30px] text-black font-semibold bg-white absolute top-[100px] right-[20px] rounded-full cursor-pointer text-[19px] px-[20px] py-[10px] hidden lg:block"
         onClick={() =>
@@ -799,6 +781,7 @@ const restartTimeoutRef = useRef(null);
       </button>
 
       {/* Assistant Image */}
+
       <div className="w-[300px] h-[400px] flex justify-center items-center overflow-hidden rounded-4xl shadow-lg">
         <img
           src={userData?.assistantImage}
@@ -808,11 +791,13 @@ const restartTimeoutRef = useRef(null);
       </div>
 
       {/* Assistant Name */}
+
       <h1 className="text-white text-[18px] font-semibold">
         I'm {userData?.assistantName}
       </h1>
 
       {/* User Animation */}
+
       {!aiText && (
         <img
           src={userImg}
@@ -822,6 +807,7 @@ const restartTimeoutRef = useRef(null);
       )}
 
       {/* AI Animation */}
+
       {aiText && (
         <img
           src={aiImg}
@@ -831,11 +817,14 @@ const restartTimeoutRef = useRef(null);
       )}
 
       {/* Text */}
+
       <h1 className="text-white text-[18px] font-semibold text-wrap text-center">
         {userText
           ? userText
           : aiText
           ? aiText
+          : listening
+          ? "Listening..."
           : null}
       </h1>
     </div>
